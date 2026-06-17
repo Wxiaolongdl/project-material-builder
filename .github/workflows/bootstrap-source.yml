@@ -21,33 +21,42 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          if (-not (Test-Path '.bootstrap')) {
-            Write-Host 'No bootstrap folder found. Nothing to do.'
-            exit 0
-          }
-
-          $parts = Get-ChildItem '.bootstrap' -Filter 'source.zip.b64.part*' | Sort-Object Name
-          if ($parts.Count -eq 0) {
-            throw 'No source archive chunks found in .bootstrap.'
-          }
-
-          $base64Path = '.bootstrap/source.zip.b64'
-          $zipPath = '.bootstrap/source.zip'
+          $zipPath = $null
           $extractPath = '.bootstrap/extract'
 
-          if (Test-Path $base64Path) { Remove-Item $base64Path -Force }
-          foreach ($part in $parts) {
-            Add-Content -LiteralPath $base64Path -Value (Get-Content -LiteralPath $part.FullName -Raw) -NoNewline
+          if (Test-Path 'pmb-source-min.zip') {
+            $zipPath = 'pmb-source-min.zip'
+            Write-Host 'Using root pmb-source-min.zip.'
+          } elseif (Test-Path '.bootstrap/source.zip') {
+            $zipPath = '.bootstrap/source.zip'
+            Write-Host 'Using .bootstrap/source.zip.'
+          } elseif (Test-Path '.bootstrap') {
+            $parts = Get-ChildItem '.bootstrap' -Filter 'source.zip.b64.part*' | Sort-Object Name
+            if ($parts.Count -eq 0) {
+              throw 'No source archive found. Upload pmb-source-min.zip to repository root, or provide .bootstrap/source.zip.b64.part* chunks.'
+            }
+
+            $base64Path = '.bootstrap/source.zip.b64'
+            $zipPath = '.bootstrap/source.zip'
+            if (Test-Path $base64Path) { Remove-Item $base64Path -Force }
+            foreach ($part in $parts) {
+              Add-Content -LiteralPath $base64Path -Value (Get-Content -LiteralPath $part.FullName -Raw) -NoNewline
+            }
+
+            $bytes = [Convert]::FromBase64String((Get-Content -LiteralPath $base64Path -Raw))
+            [System.IO.File]::WriteAllBytes((Resolve-Path '.bootstrap').Path + '\source.zip', $bytes)
+            Write-Host "Using chunked bootstrap archive with $($parts.Count) part(s)."
+          } else {
+            throw 'No source archive found. Upload pmb-source-min.zip to repository root and run this workflow again.'
           }
 
-          $bytes = [Convert]::FromBase64String((Get-Content -LiteralPath $base64Path -Raw))
-          [System.IO.File]::WriteAllBytes((Resolve-Path '.bootstrap').Path + '\source.zip', $bytes)
-
           if (Test-Path $extractPath) { Remove-Item $extractPath -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $extractPath | Out-Null
           Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
 
           Copy-Item -Path (Join-Path $extractPath '*') -Destination '.' -Recurse -Force
-          Remove-Item '.bootstrap' -Recurse -Force
+          if (Test-Path '.bootstrap') { Remove-Item '.bootstrap' -Recurse -Force }
+          if (Test-Path 'pmb-source-min.zip') { Remove-Item 'pmb-source-min.zip' -Force }
           Remove-Item '.github/workflows/bootstrap-source.yml' -Force
 
       - name: Commit expanded source
